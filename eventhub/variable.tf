@@ -26,3 +26,21 @@ variable "eventhub_namespace_tags" {
     type = map(string)
     description = "eventhub_namespace tags"
 }
+variable "eventhub_namespace_subnet_id" {
+    type = string
+    description = "eventhub_namespace subnet_id"
+}
+
+variable "eventhub_namespace_ip_rules" {
+    type = list(object({
+      ip_mask = string
+      action = string
+    }))  
+}
+
+variable "network_rulesets" {
+    type = list(object({
+      subnet_id = string
+    }))
+  
+}
