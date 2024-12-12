@@ -55,7 +55,7 @@ resource "azurerm_cosmosdb_sql_container" "container" {
     resource_group_name        = var.cosmosdb_resource_group_name
     account_name               = var.cosmosdb_name
     database_name              = var.cosmosdb_database_name
-    partition_key_path         = var.cosmosdb_container_partition_key_path
+    partition_key_paths        = var.cosmosdb_container_partition_key_path
 
     depends_on                 = [ azurerm_cosmosdb_sql_database.db ]
   
