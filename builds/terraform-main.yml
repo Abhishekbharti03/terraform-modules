@@ -1,0 +1,94 @@
+parameters:
+  - name: 'environments'
+    type: object
+    default:
+        - environment: lab
+          region: ['em23']
+          terraformstg: storageterraformdr
+          terraformrg: TERRAFORM-DR-RG 
+          azuresub: 'CFT-RM-LAB'
+    
+  - name: 'workingdirectory'
+    type: string
+    default: ''
+  - name: 'applicationresourcegroupidentifier'
+    type: string
+    default: ''
+  - name: 'backendcontainerprefix'
+    type: string
+    default: ''
+  - name: 'isaddvargroupsuffix'
+    type: boolean
+    default: false  
+  - name: 'isAddVirtualApp'
+    type: boolean
+    default: false
+
+
+#resources:
+#  repositories:
+#    - repository: RIC.DevOps
+#      type: git
+#      name: RIC.DevOps
+
+stages:
+- ${{each env in parameters.environments}}:
+  - ${{each region in env.region}}:
+    - stage: ${{ env.environment }}_${{ region }}_plan
+      displayName: ${{ env.environment}}_${{ region }}_plan
+      dependsOn: ${{env.dependsOn}}
+      condition: succeeded()
+      jobs:
+        - deployment: Deploy_${{ env.environment }}_${{ region }}_plan
+          displayName: Deploy_${{ env.environment }}_${{ region }}_plan
+          environment: ${{ env.environment }}
+        - job: DeployTerraform_${{ env.environment }}_${{ region }}_plan
+          continueOnError: false
+          timeoutInMinutes: '30'
+          variables:
+            - group: _GlobalRegion_${{ region }}
+            - ${{ if eq(parameters.isaddvargroupsuffix, true) }}:
+              - group: _GlobalSettings_${{ env.environment }}_RIC
+            - ${{ else }}:
+              - group: _GlobalSettings_${{ env.environment }}
+          steps:
+            - template: /builds/terraform-plan.yml@RIC.DevOps
+              parameters:
+                azuresub: ${{ env.azuresub }}
+                terraformrgname: ${{ env.terraformrg }}
+                terraformstoragename: ${{ env.terraformstg }}
+                backendcontainer: ${{parameters.backendcontainerprefix}}${{ env.environment }}${{ region }}
+                environment: ${{ env.environment }}
+                workingdirectory: '${{parameters.workingdirectory}}'
+                tfvarsfilepath: '${{parameters.workingdirectory}}\*.tfvars'
+
+    - stage: ${{ env.environment }}_${{ region }}_apply
+      displayName: ${{ env.environment}}_${{ region }}_apply
+      dependsOn: ${{ env.environment }}_${{ region }}_plan
+      condition: succeeded()
+      jobs:
+        - deployment: Deploy_${{ env.environment }}_${{ region }}_apply
+          displayName: Deploy_${{ env.environment }}_${{ region }}_apply
+          environment: ${{ env.environment }}
+
+        - job: DeployTerraform_${{ env.environment }}_${{ region }}_apply
+          continueOnError: false
+          timeoutInMinutes: '60'
+          variables:
+            - group: _GlobalRegion_${{ region }}
+            - ${{ if eq(parameters.isaddvargroupsuffix, true) }}:
+              - group: _GlobalSettings_${{ env.environment }}_RIC
+            - ${{ else }}:
+              - group: _GlobalSettings_${{ env.environment }}
+          steps:
+            - template: /builds/terraform-apply.yml@RIC.DevOps
+              parameters:
+                azuresub: ${{ env.azuresub }}
+                terraformrgname: ${{ env.terraformrg }}
+                terraformstoragename: ${{ env.terraformstg }}
+                backendcontainer: ${{parameters.backendcontainerprefix}}${{ env.environment }}${{ region }}
+                environment: ${{ env.environment }}
+                workingdirectory: '${{parameters.workingdirectory}}'
+                tfvarsfilepath: '${{parameters.workingdirectory}}\*.tfvars'
+                applicationresourcegroupidentifier: '${{parameters.applicationresourcegroupidentifier}}'
+                isAddVirtualApp: ${{parameters.isAddVirtualApp}}

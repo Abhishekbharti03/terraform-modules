@@ -1,0 +1,197 @@
+parameters:
+  - name: 'environments'
+    type: object
+    default:
+        - environment: dev
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'develop'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: false
+        
+        - environment: qa
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'develop'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: false
+
+        - environment: iat
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'release'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: true
+
+        - environment: rc
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'release'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: false
+
+        - environment: prod
+          azuresub: 'CFT-RM-PROD'
+          branchName: 'release'
+          dependsOn: iat_em22
+          region: ['em22', 'na20']
+          isDeployToSlot: false
+
+  - name: isaddvargroupsuffix
+    type: boolean
+    default: false
+  - name: 'NodeVersionSpec'
+    type: string
+    default: '19.x'
+  - name: 'projectkey'
+    type: string
+  - name: 'projectName'
+    type: string
+  - name: enabled
+    type: boolean
+    default: ''
+  - name: customCommand
+    type: string
+  - name: npmtestenabled
+    type: boolean
+    default: false
+  - name: 'workingDir'
+    type: string
+  - name: 'Contents'
+    type: string
+  - name: SonarCloudenabled
+    type: boolean
+    default: false
+  - name: 'WebAppName'
+    type: string
+  - name: variableGroup
+    type: object
+  - name: package
+    type: string
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build job
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - checkout: self
+    - checkout: RIC.DevOps
+
+    - task: NodeTool@0
+      displayName: Use Node 19.x
+      inputs:
+        versionSpec: ${{ parameters.NodeVersionSpec }}
+        checkLatest: true
+
+    - task: SonarCloudPrepare@1
+      displayName: 'Prepare analysis on SonarCloud'
+      inputs:
+        SonarCloud: 'SonarCloud'
+        organization: 'willisgroup'
+        scannerMode: Other
+        projectKey: ${{ parameters.projectKey }}
+        projectName: ${{ parameters.projectName }}
+
+    - task: Npm@1
+      displayName: ${{ parameters.customCommand }}
+      inputs:
+        command: custom
+        workingDir: ${{ parameters.workingDir }}
+        verbose: false
+        customCommand: ${{ parameters.customCommand }}
+        customFeed: '46e76f29-1875-45c2-a008-b24cdcc0a62a'
+
+    - task: Npm@1
+      displayName: 'npm lint'
+      enabled: ${{ parameters.npmtestenabled }}
+      inputs:
+        command: custom
+        workingDir: ${{ parameters.workingDir }}
+        verbose: false
+        customCommand: 'run lint'
+
+    - task: Npm@1
+      displayName: 'npm test'
+      enabled: ${{ parameters.npmtestenabled }}
+      inputs:
+        command: custom
+        workingDir: ${{ parameters.workingDir }}
+        verbose: false
+        customCommand: 'run testCI'
+        
+    - task: Npm@1
+      displayName: run build
+      inputs:
+        command: custom
+        workingDir: ${{ parameters.workingDir }}
+        verbose: false
+        customCommand: run build
+    - task: CopyFiles@2
+      displayName: 'Copy Files to: $(build.artifactstagingdirectory)'
+      inputs:
+        SourceFolder: $(build.sourcesdirectory)
+        Contents: ${{ parameters.Contents }}
+        TargetFolder: $(build.artifactstagingdirectory)
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: drop'
+
+    - task: SonarCloudAnalyze@1
+      displayName: 'Run SonarCloud Code Analysis'
+      enabled: ${{ parameters.SonarCloudenabled }}
+
+    - task: SonarCloudPublish@1
+      displayName: 'Publish SonarCloud Result'
+      enabled: ${{ parameters.SonarCloudenabled }}
+      inputs:
+        pollingTimeoutSec: '300'
+
+- ${{each env in parameters.environments}}:
+  - ${{each region in env.region}}:
+    - ${{if eq(variables['Build.SourceBranchName'], env.branchName) }}:
+      - stage: ${{ env.environment }}_${{ region }}
+        displayName: Deploy_to_${{ env.environment }}_${{ region }}
+        dependsOn: 
+        - Build
+        - ${{ env.dependsOn }}
+        condition: succeeded()
+        jobs:
+        - deployment: Deploy
+          displayName: Deploy job
+          pool:
+            vmImage: 'windows-latest'
+          environment: ${{ env.environment }}
+          variables:
+            - group: _GlobalRegion_${{ region }}
+            - ${{ if eq(parameters.isaddvargroupsuffix, true) }}:
+              - group: _GlobalSettings_${{ env.environment }}_RIC
+            - ${{ else }}:
+              - group: _GlobalSettings_${{ env.environment }}
+            - ${{each vg in parameters.variableGroup}}:
+              - ${{if eq(vg.environment, env.environment) }}:
+                - ${{each group in vg.groups}}:
+                  - group: ${{ group }}
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                - task: DownloadBuildArtifacts@1
+                  inputs:
+                    buildType: 'current'
+                    downloadType: 'single'
+                    artifactName: 'drop'
+                    downloadPath: '$(System.ArtifactsDirectory)'
+                - task: AzureWebApp@1
+                  displayName: 'Deploy to Azure Web App'               
+                  inputs:
+                    azureSubscription: ${{ env.azuresub }}
+                    appName: ${{ parameters.WebAppName }}
+                    package: ${{ parameters.package }}
+                    appType: webApp
+                    ${{ if eq(env.isDeployToSlot, true) }}:
+                      slotName: ${{ env.environment }}
+                    ${{ if eq(env.isDeployToSlot, true) }}:
+                      deployToSlotOrASE: true
