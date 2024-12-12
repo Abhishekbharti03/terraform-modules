@@ -4,9 +4,9 @@ parameters:
     default:
         - environment: lab
           region: ['em23']
-          terraformstg: storageterraformdr
-          terraformrg: TERRAFORM-DR-RG 
-          azuresub: 'CFT-RM-LAB'
+          terraformstg: storageAccountName
+          terraformrg: rgname 
+          azuresub: 'sub-name'
     
   - name: 'workingdirectory'
     type: string

@@ -1,6 +1,3 @@
-# # Resource Group Variables
-# #-------------------------------------------------------------
-# # CRBCFT-CLIENTPORTAL-EM22-DR-RGRP variables starting from here
 variable "containerregistry_name" {
   type        = string
   description = ".containerregistry_name"

@@ -1,20 +1,18 @@
 # Login to your Azure account
 #Connect-AzAccount
-#Set-AzContext 'WTW-CRBCFT-LAB'
-Set-AzContext 'WTW-CRBCFT-DEV'
-#Set-AzContext 'WTW-CRBCFT-PROD'
+Set-AzContext ###subscription name
 
 # app specific
-$appname = "sts-ric-iat"
-$frontendurl = "sts.iat.ric.wtwco.com"
-$backendtarget = "crbric-sts-em22-d-api-iat.azurewebsites.net"
+$appname = #app name
+$frontendurl = #frontendurl
+$backendtarget = ##backendtarget
 
 # usually shared. for slots it'll usually point to the parent settings
-$certname = "sts-ric-dev"
-$healthProbe = "sts-dev"
+$certname = #cert name
+$healthProbe = #healthprobe
 
 # Get the existing app gateway
-$appgw = Get-AzApplicationGateway -Name "CRBCFT-DCS-EM22-D-AGW01" -ResourceGroupName "CRBCFT-DCS-EM22-D-RGRP"
+$appgw = Get-AzApplicationGateway -Name "agw" -ResourceGroupName "agw-RGRP"
 
 function Get-NewOrExistingAppGwBackendPool {
     param (
