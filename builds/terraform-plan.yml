@@ -1,0 +1,93 @@
+  parameters:
+  - name: azuresub
+    type: string
+    default: ''
+  - name: terraformrgname
+    type: string
+    default: ''
+  - name: terraformstoragename
+    type: string
+    default: ''
+  - name: backendcontainer
+    type: string
+    default: ''
+  - name: workingdirectory
+    type: string
+    default: ''
+  - name: tfvarsfilepath
+    type: string
+    default: ''
+  - name: applicationresourcegroupidentifier
+    type: string
+    default: ''
+  - name: environment
+    type: string
+    default: ''
+
+  steps:
+  - checkout: self
+    submodules: true
+  - task: TerraformInstaller@0
+    inputs:
+      terraformVersion: 'latest'
+  - task: qetza.replacetokens.replacetokens-task.replacetokens@5
+    inputs:
+      targetFiles: ${{ parameters.tfvarsfilepath}}
+      encoding: 'auto'
+      tokenPattern: 'rm'
+      writeBOM: false
+      actionOnMissing: 'warn'
+      keepToken: false
+      actionOnNoFiles: 'continue'
+      enableTransforms: false
+      enableRecursion: false
+      useLegacyPattern: false
+      enableTelemetry: true
+  - task: AzurePowerShell@5
+    displayName: AzPwsh-CreateTerrformContainerIfNotExists
+    inputs:
+      azureSubscription: ${{ parameters.azuresub }}
+      ScriptType: 'InlineScript'
+      Inline: |
+        
+        $storageAccountName = '${{ parameters.terraformstoragename}}'
+        $resourceGroupName = '${{ parameters.terraformrgname}}'
+        $containerName = '${{ parameters.backendcontainer}}'
+        $storageAccount = Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName
+        $container = Get-AzStorageContainer -Name $containerName -Context $storageAccount.Context -ErrorAction SilentlyContinue
+        if (!$container) {
+          New-AzStorageContainer -Name $containerName -Context $storageAccount.Context -Permission Off
+        }
+      preferredAzurePowerShellVersion: '7.1.0'
+
+  - task: TerraformTaskV3@3
+    displayName: 'Terraform Init'
+    inputs:
+      provider: 'azurerm'
+      workingDirectory: '${{ parameters.workingdirectory}}'
+      command: 'init'
+      commandOptions: '-lock=false'
+      backendServiceArm: ${{ parameters.azuresub }}
+      backendAzureRmResourceGroupName: '${{ parameters.terraformrgname}}'
+      backendAzureRmStorageAccountName: '${{ parameters.terraformstoragename}}'
+      backendAzureRmContainerName: '${{ parameters.backendcontainer}}'
+      backendAzureRmKey: 'terraform.tfstate'
+  - task: TerraformTaskV3@3
+    displayName: 'Terraform Validate'
+    inputs:
+      provider: 'azurerm'
+      workingDirectory: '${{ parameters.workingdirectory}}'
+      command: 'validate'  
+  - task: TerraformTaskV3@3
+    displayName: 'Terraform Plan'
+    inputs:
+      provider: 'azurerm'
+      workingDirectory: '${{ parameters.workingdirectory}}'
+      command: 'plan'
+      commandOptions: '-out=$(Build.BuildNumber)-${{ parameters.environment}}.tfplan'
+      environmentServiceNameAzureRM: ${{ parameters.azuresub }}
+  - task: PublishBuildArtifacts@1
+    inputs:
+      pathtoPublish: '${{ parameters.workingdirectory}}/$(Build.BuildNumber)-${{ parameters.environment}}.tfplan'
+      artifactName: 'terraformPlan'
+      publishLocation: 'Container'

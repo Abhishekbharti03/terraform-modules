@@ -1,0 +1,202 @@
+parameters:
+  - name: 'environments'
+    type: object
+    default:
+        - environment: dev
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'develop'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: false
+        
+        - environment: qa
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'develop'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: false
+
+        - environment: iat
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'release'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: true
+
+        - environment: rc
+          azuresub: 'CFT-RM-DEV'
+          branchName: 'release'
+          dependsOn: 'Build'
+          region: ['em22']
+          isDeployToSlot: false
+
+        - environment: prod
+          azuresub: 'CFT-RM-PROD'
+          branchName: 'release'
+          dependsOn: iat_em22
+          region: ['em22', 'na20']
+          isDeployToSlot: false
+
+  - name: isaddvargroupsuffix
+    type: boolean
+    default: false
+  - name: 'buildPlatform'
+    type: string
+    default: 'Any CPU'
+  - name: 'buildConfiguration'
+    type: string
+    default: 'Release'
+  - name: 'dotnetVersion'
+    type: string
+    default: '6.0.412'
+  - name: 'projectkey'
+    type: string
+  - name: 'projectName'
+    type: string
+  - name: nugetConfigPath
+    type: string
+  - name: projects
+    type: string
+  - name: enabled
+    type: boolean
+  - name: FuncAppName
+    type: string
+  - name: packageForLinux
+    type: string
+  - name: AppSettings
+    type: string
+  - name: ResourceGroupName
+    type: string
+  - name: variableGroup
+    type: object
+  - name: rbacScript
+    type: boolean
+    default: false
+  - name: scriptPath
+    type: string
+    default: ""
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Job_1
+    displayName: Agent job 1
+    pool:
+      vmImage: windows-latest
+    steps:
+    - checkout: self
+    - checkout: RIC.DevOps
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: ${{parameters.dotnetVersion}}
+
+    - task: SonarCloudPrepare@1
+      displayName: 'Prepare analysis on SonarCloud'
+      inputs:
+        SonarCloud: 'SonarCloud'
+        organization: 'willisgroup'
+        scannerMode: 'MSBuild'
+        projectKey: ${{ parameters.projectkey }}
+        projectName: ${{ parameters.projectName }}
+
+    - task: DotNetCoreCLI@2
+      displayName: dotnet restore
+      inputs:
+        command: restore
+        projects: ${{ parameters.projects }}
+        arguments: --output publish_output --configuration Release
+        feedsToUse: config
+        nugetConfigPath: ${{ parameters.nugetConfigPath }}
+        externalFeedCredentials: 'RIC Wtw.Crb.Common'
+    - task: DotNetCoreCLI@2
+      displayName: dotnet build
+      inputs:
+        projects: ${{ parameters.projects }}
+        arguments: --configuration ${{ parameters.buildConfiguration }}  
+    - task: DotNetCoreCLI@2
+      displayName: dotnet publish
+      inputs:
+        command: publish
+        publishWebProjects: false
+        projects: ${{ parameters.projects }}
+        arguments: ' --configuration ${{ parameters.buildConfiguration }} --output $(Build.ArtifactStagingDirectory) --no-build'
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+    - task: SonarCloudAnalyze@1
+      displayName: 'Run SonarCloud Code Analysis'
+      enabled: ${{ parameters.enabled }}
+
+    - task: SonarCloudPublish@1
+      displayName: 'Publish SonarCloud Result'
+      enabled: ${{ parameters.enabled }}
+      inputs:
+        pollingTimeoutSec: '300'
+
+
+- ${{each env in parameters.environments}}:
+  - ${{each region in env.region}}:
+    - ${{if eq(variables['Build.SourceBranchName'], env.branchName) }}:
+      - stage: ${{ env.environment }}_${{ region }}
+        displayName: Deploy_to_${{ env.environment }}_${{ region }}
+        dependsOn: 
+        - Build
+        - ${{ env.dependsOn }}
+        condition: succeeded()
+        jobs:
+        - deployment: Deploy
+          displayName: Deploy job
+          pool:
+            vmImage: 'windows-latest'
+          environment: ${{ env.environment }}
+          variables:
+            - group: _GlobalRegion_${{ region }}
+            - ${{ if eq(parameters.isaddvargroupsuffix, true) }}:
+              - group: _GlobalSettings_${{ env.environment }}_RIC
+            - ${{ else }}:
+              - group: _GlobalSettings_${{ env.environment }}
+            - ${{each vg in parameters.variableGroup}}:
+              - ${{if eq(vg.environment, env.environment) }}:
+                - ${{each group in vg.groups}}:
+                  - group: ${{ group }}
+          strategy:
+            runOnce:
+              deploy:
+                steps: 
+                - task: DownloadBuildArtifacts@1
+                  inputs:
+                    buildType: 'current'
+                    downloadType: 'single'
+                    artifactName: 'drop'
+                    downloadPath: '$(System.ArtifactsDirectory)'
+                  
+                - task: AzureRmWebAppDeployment@4
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: ${{ env.azuresub }}
+                    appType: functionApp
+                    WebAppName: ${{ parameters.FuncAppName }}
+                    packageForLinux: ${{ parameters.packageForLinux }}
+                    enableCustomDeployment: true
+                    DeploymentType: webDeploy
+                    JSONFiles: '**/appsettings.json'
+                    AppSettings: ${{ parameters.AppSettings }}
+                    ${{ if eq(env.isDeployToSlot, true) }}:
+                      slotName: ${{ env.environment }}
+                    ${{ if eq(env.isDeployToSlot, true) }}:
+                      deployToSlotOrASE: true
+                    ${{ if eq(env.isDeployToSlot, true) }}:
+                      ResourceGroupName: ${{ parameters.ResourceGroupName }}
+
+                - task: PowerShell@2
+                  displayName: 'Run post-deployment Rbac script'
+				          condition: eq(${{parameters.rbacScript}}, true)
+                  inputs:
+                    filePath: ${{ parameters.scriptPath }}
+                    arguments: '-subscriptionId f2330bbc-2e83-44f9-8b1b-dad4e6734872 -resourceGroupName "WTW-COB-UK-S-DEV-Resource-Group-RICentral-Platform-Resources" -storageAccountName "wtwcobuksdevappservice" -containerName "constants" -functionAppName "CRBRIC-CDC-EM22-D-FUNC" -functionRG "crbric-cdc-em22-d-RGRP" -ventRG "NETWORKS-D-EM22-RGRP" -vnetName "CRBRIC-D-EM22-VNET" -subnetName "CDC-D-EM22-SUBN1"'

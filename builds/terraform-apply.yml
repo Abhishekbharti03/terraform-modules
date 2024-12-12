@@ -1,0 +1,122 @@
+parameters:
+  - name: azuresub
+    type: string
+    default: ""
+  - name: terraformrgname
+    type: string
+    default: ""
+  - name: terraformstoragename
+    type: string
+    default: ""
+  - name: backendcontainer
+    type: string
+    default: ""
+  - name: workingdirectory
+    type: string
+    default: ""
+  - name: tfvarsfilepath
+    type: string
+    default: ""
+  - name: applicationresourcegroupidentifier
+    type: string
+    default: ""
+  - name: environment
+    type: string
+    default: ""
+  - name: isAddVirtualApp
+    type: boolean
+    default: false
+
+steps:
+  - checkout: self
+    submodules: true
+  - task: DownloadPipelineArtifact@2
+    #inputs:
+    # patterns: '**/*.tfplan'
+    # artifactName: tfplan
+    # path: '$(System.SourceDirectory)/$(WorkingDirectory)'
+    inputs:
+      #patterns: '*.tfplan'
+      buildType: "current"
+      downloadType: "single"
+      artifactName: "terraformPlan"
+      downloadPath: "$(System.ArtifactsDirectory)"
+  - task: TerraformInstaller@0
+    inputs:
+      terraformVersion: "latest"
+  - task: qetza.replacetokens.replacetokens-task.replacetokens@5
+    inputs:
+      targetFiles: ${{ parameters.tfvarsfilepath}}
+      encoding: "auto"
+      tokenPattern: "rm"
+      writeBOM: false
+      actionOnMissing: "warn"
+      keepToken: false
+      actionOnNoFiles: "continue"
+      enableTransforms: false
+      enableRecursion: false
+      useLegacyPattern: false
+      enableTelemetry: true
+  - task: TerraformTaskV3@3
+    displayName: "Terraform Init"
+    inputs:
+      provider: "azurerm"
+      workingDirectory: "${{ parameters.workingdirectory}}"
+      command: "init"
+      commandOptions: "-lock=false"
+      backendServiceArm: ${{ parameters.azuresub }}
+      backendAzureRmResourceGroupName: "${{ parameters.terraformrgname}}"
+      backendAzureRmStorageAccountName: "${{ parameters.terraformstoragename}}"
+      backendAzureRmContainerName: "${{ parameters.backendcontainer}}"
+      backendAzureRmKey: "terraform.tfstate"
+  - task: TerraformTaskV3@3
+    displayName: "Terraform Validate"
+    inputs:
+      provider: "azurerm"
+      workingDirectory: "${{ parameters.workingdirectory}}"
+      command: "validate"
+  - task: TerraformTaskV3@3
+    displayName: "Terraform Apply"
+    inputs:
+      provider: "azurerm"
+      workingDirectory: "${{ parameters.workingdirectory}}"
+      command: "apply"
+      commandOptions: "$(System.ArtifactsDirectory)/$(Build.BuildNumber)-${{ parameters.environment}}.tfplan"
+      environmentServiceNameAzureRM: ${{ parameters.azuresub }}
+  - task: AzureCLI@2
+    displayName: "Azure CLI - Apply IPs to ${{ parameters.applicationresourcegroupidentifier}} RG"
+    inputs:
+      azureSubscription: ${{ parameters.azuresub }}
+      scriptType: ps
+      scriptPath: "$(Build.SourcesDirectory)/lib/RIC.DevOps/scripts/pwsh/resourcegroup/apply-sase-ips-to-apps-funcs-in-rg.ps1"
+      arguments: "-RGMatchingTextsList ${{ parameters.applicationresourcegroupidentifier}}"
+  #- task: AzureCLI@2
+  #  displayName: "Create storage account containers and add RBAC"
+  #  inputs:
+  #    azureSubscription: ${{ parameters.azuresub }}
+  #    scriptType: ps
+  #    scriptPath: "$(Build.SourcesDirectory)/lib/RIC.DevOps/scripts/pwsh/storageaccount/create-containers-and-rbac.ps1"
+  #    arguments: -resourceGroupName '$(resourceGroupName)' -storageAccountName $(storageAccountName) -containers $(containers) -appSlots $(appSlots) -appListToAddRBACToStorageContainer $(appListToAddRBACToStorageContainer)
+  - task: AzureCLI@2
+    displayName: "Apply IPs to storage account present under ${{ parameters.applicationresourcegroupidentifier}} RG"
+    inputs:
+      azureSubscription: ${{ parameters.azuresub }}
+      scriptType: ps
+      scriptPath: "$(Build.SourcesDirectory)/lib/RIC.DevOps/scripts/pwsh/resourcegroup/loop-all-storage-account-in-rg-and-apply-ips.ps1"
+      arguments: -RGMatchingTextsList ${{ parameters.applicationresourcegroupidentifier}}
+  - task: AzureCLI@2
+    displayName: "Create virtual directories and applications"
+    condition: eq(${{parameters.isAddVirtualApp}}, true)
+    inputs:
+      azureSubscription: ${{ parameters.azuresub }}
+      scriptType: ps
+      scriptPath: "$(Build.SourcesDirectory)/lib/RIC.DevOps/scripts/pwsh/appservice/create-virtual-apps.ps1"
+      arguments: -virtualAppConfig '$(virtualAppConfig)'
+  - task: AzureCLI@2
+    displayName: "Azure CLI - Apply Vnet Integration to all slots in ${{ parameters.applicationresourcegroupidentifier}} RG"
+    condition: and(ne(variables.VNet_Name, 'null'), ne(variables.VNet_Name, ''))
+    inputs:
+      azureSubscription: ${{ parameters.azuresub }}
+      scriptType: ps
+      scriptPath: "$(Build.SourcesDirectory)/lib/RIC.DevOps/scripts/pwsh/resourcegroup/vnet-integrate-and-apply-ips-to-all-apps-funcs-slots-in-rg.ps1"
+      arguments: '-RGMatchingTextsList ${{ parameters.applicationresourcegroupidentifier}} -VNetName "$(VNet_Name)" -VNetRG  "$(VNet_RG_Name)"'

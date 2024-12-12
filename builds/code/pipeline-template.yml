@@ -1,0 +1,78 @@
+parameters:
+  - name: 'environments'
+    type: object
+    default:
+        - environment: lab
+          region: ['em23']
+          terraformstg: storageterraformdr
+          terraformrg: TERRAFORM-DR-RG 
+          azuresub: 'CFT-RM-LAB'
+          
+        - environment: dev
+          dependsOn: 'lab_em23_apply'
+          region: ['em22']
+          terraformstg: crbricterraformdstg
+          terraformrg: CRBRIC-TERRAFORM-D-RGRP 
+          azuresub: 'CFT-RM-DEV'
+          
+        - environment: qa
+          dependsOn: 'dev_em22_apply'
+          region: ['em22']
+          terraformstg: crbricterraformdstg
+          terraformrg: CRBRIC-TERRAFORM-D-RGRP 
+          azuresub: 'CFT-RM-DEV'
+       
+        - environment: iat
+          dependsOn: 'qa_em22_apply'
+          region: ['em22','na20']
+          terraformstg: crbricterraformpstg
+          terraformrg: CRBRIC-TERRAFORM-P-RGRP 
+          azuresub: 'CFT-RM-PROD'
+
+        - environment: prod
+          dependsOn: 'iat_em22_apply'
+          region: ['em22','na20']
+          terraformstg: crbricterraformpstg
+          terraformrg: CRBRIC-TERRAFORM-P-RGRP 
+          azuresub: 'CFT-RM-PROD' 
+  - name: workingdirectory
+    type: string
+    default: 'ClientDataCapture'
+  - name: applicationresourcegroupidentifier
+    type: string
+    default: 'CDC'
+  - name: backendcontainerprefix
+    type: string
+    default: 'clientdatacapture'
+  - name: isaddvargroupsuffix
+    type: boolean
+    default: false
+
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include: 
+      - 'ClientDataCapture/*'
+
+resources:
+  repositories:
+    - repository: RIC.DevOps
+      type: git
+      name: RIC.DevOps
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  - group: Platform-Common-Rgrp
+  - group: CDC-Common
+
+extends:
+  template: /builds/terraform-main.yml@RIC.DevOps
+  parameters:
+    environments: ${{parameters.environments}}
+    workingdirectory: ${{parameters.workingdirectory}}
+    applicationresourcegroupidentifier: ${{parameters.applicationresourcegroupidentifier}}
+    backendcontainerprefix: ${{parameters.backendcontainerprefix}}
+    isaddvargroupsuffix: ${{parameters.isaddvargroupsuffix}}
